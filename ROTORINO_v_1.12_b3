@@ -1,0 +1,371 @@
+// --------------------------------------------------------------------------------- //
+//                                                                                   //
+//                                       ROTORINO                                    //
+//                                    V. 1.12 beta 3                                 // 
+//                                by Andrea Dalbagno IN3IWZ                          //
+//                                                                                   //
+// --------------------------------------------------------------------------------- //
+// ***LIBRERIE*************************************************************************
+// -------- DISPLAY -------------------------------------------------------------------
+#include <Arduino.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <Encoder.h>
+#include <SPI.h>
+#include <arduino-timer.h>
+// ***VARIABILI E COSTANTI*************************************************************
+// ORIGINE O(0,0) DEL SISTEMA GRAFICO DEL DISPLAY IN ALTO A SINISTRA //
+// ASCISSE POSITIVE VERSO DESTRA, ORDINATE POSITIVE VERSO IL BASSO   //
+// -------- DISPLAY -------------------------------------------------------------------
+#define TFT_CS 10   // PIN CS DISPLAY ASSEGNATO AL PIN D10
+#define TFT_DC 9    // PIN DC DISPLAY ASSEGNATO AL PIN D9
+#define TFT_MOSI 11 // PIN MOSI DISPLAY ASSEGNATO AL PIN D11
+#define TFT_SCLK 13 // PIN CLK DISPLAY ASSEGNATO AL PIN D13
+#define TFT_RST 8   // PIN RST DISPLAY ASSEGNATO AL PIN D8
+int xC = 80;        // ASCISSA CENTRO CERCHIO
+int yC = 72;        // ORDINATA CENTRO CERCHIO
+int xCC = 80;       // ASCISSA PUNTO PARTENZA INIZIALE AGO DIREZIONE ATTUALE
+int yCC = 67;       // ORDINATA PUNTO PARTENZA INIZIALE AGO DIREZIONE ATTUALE
+int xICC = 80;      // ASCISSA PUNTO PARTENZA INIZIALE AGO DIREZIONE IMPOSTATA
+int yICC = 67;      // ORDINATA PUNTO PARTENZA INIZIALE AGO DIREZIONE IMPOSTATA
+int rC = 40;        // RAGGIO CERCHIO
+int rCC = 3;        // RAGGIO CERCHIO CENTRALE
+int aC = 0;         // ANGOLO
+int xP = 80;        // ASCISSA ESTREMO AGO DIREZIONE ATTUALE (VERDE)
+int yP = 72;        // ORDINATA ESTREMO AGO DIREZIONE ATTUALE (VERDE)
+int xIP = 80;       // ASCISSA ESTREMO INIZIALE AGO DIREZIONE IMPOSTATA (ROSSA)
+int yIP = 34;       // ORDINATA ESTREMO INIZIALE AGO DIREZIONE IMPOSTATA (ROSSA)
+float aT = 0.00;    // ANGOLO PER DISEGNO GRADUAZIONE CERCHI
+// --------POTENZIOMETRO---------------------------------------------------------------
+#define POT_CENT A0   // REOFORO CENTRALE DEL POTENZIOMETRO ASSOCIATO AL PIN A0
+float TRad;           // ANGOLO TRIGONOMETRICO DIREZIONE ATTUALE (VERDE)IN RADIANTI
+int G;                // ANGOLO GEOGRAFICO DIREZIONE ATTUALE (VERDE)IN GRADI
+char G_STR [4];       // ANGOLO GEOGRAFICO DIREZIONE ATTUALE (VERDE)IN STRINGA FORMATTATA
+int prec_dirMap = -1; // ANGOLO MAPPATURA DIREZIONE ATTUALE (VERDE)IN GRADI (INIZIALIZZAZIONE)
+int M = 180;          // ANGOLO MAPPATURA DIREZIONE ATTUALE (VERDE)IN GRADI (INIZIALIZZAZIONE)
+// --------ENCODER---------------------------------------------------------------------
+#define encoderCLK 2   // CLK (canale A) connesso al pin D2 (INTERRUPT 0)
+#define encoderDT 4    // DT (Canale B) connesso al pin D4 (INTERRUPT 1)
+#define encoderSW 3    // SW (Pulsante) connesso al pin D3 !!!PIGIONE DI BARDONECCHIA!!!
+#define interrupt0 0   // INTERRUPT 0 Associato al pin D2
+#define interrupt1 1   // INTERRUPT 1 Associato al pin D3
+int encoderCount = 0;       // CONTATORE SCATTI ENCODER ATTUALE (INIZIALIZZAZIONE
+int prec_encoderCount = -1; // CONTATORE SCATTI ENCODER PRECEDENTE (INIZIALIZZAZIONE)
+int actCLKState;            // Lettura attuale del canale CLK (CANALE A)(PIN D2)
+int prevCLKState;           // Lettura precedente del canale CLK (CANALE A)(PIN D2)
+float ITRad;                // ANGOLO TRIGONOMETRICO DIREZIONE IMPOSTATA (ROSSA)IN RADIANTI
+int IG;                     // ANGOLO GEOGRAFICO DIREZIONE IMPOSTATA (ROSSA)IN GRADI
+char IG_STR [4];            // ANGOLO GEOGRAFICO DIREZIONE IMPOSTATA (ROSSA) IN STRINGA FORMATTATA
+int IM = 180;               // ANGOLO MAPPATURA DIREZIONE IMPOSTATA (ROSSA)IN GRADI (INIZIALIZZAZIONE)
+int IMdlb = IM;             // ANGOLO MAPPATURA DIREZIONE IMPOSTATA (ROSSA)IN GRADI (INIZIALIZZAZIONE)
+// --------PULSANTI--------------------------------------------------------------------
+const byte pushBTN_CW = 5;  // PULSANTE ROTAZIONE ORARIA ASSOCIATO AL PIN D5
+const byte pushBTN_CCW = 6; // PULSANTE ROTAZIONE ANTIORARIA ASSOCIATO AL PIN D6
+bool BTN_CW = HIGH;
+bool BTN_CCW = HIGH;
+// --------RELE’-----------------------------------------------------------------------
+const byte rele_CW = A1;    // ATTIVAZIONE RELE ROTAZIONE ORARIA ASSOCIATA AL PIN A1
+const byte rele_CCW = A2;   // ATTIVAZIONE RELE ROTAZIONE ORARIA ASSOCIATA AL PIN A2
+// const byte rele_220 = A3;   // ATTIVAZIONE RELE ALIMENTAZIONE 220V ASSOCIATA AL PIN A3
+bool GO = LOW;              // COSTANTE PER ATTIVAZIONE RELE
+bool NOGO = HIGH;           // COSTANTE PER DISATTIVAZIONE RELE
+bool GO_NOGO = NOGO;        // VARIABILE PER DISATTIVAZIONE RELE
+// ***OGGETTI**************************************************************************
+// --------DISPLAY---------------------------------------------------------------------
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+// --------ENCODER---------------------------------------------------------------------
+Encoder enc(2, 3);
+// ***SETUP****************************************************************************
+void setup(void)
+{
+  // --------SERIAL MONITOR------------------------------------------------------------
+  Serial.begin(9600);                            // INIZIALIZZAZIONE PORTA DI COMUNICAZIONE SERIALE
+  // --------DISPLAY-------------------------------------------------------------------
+  // ---Testo iniziale-----------------------------------------------------------------
+  tft.initR(INITR_BLACKTAB);
+  tft.setRotation(3);
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setCursor(2, 0);
+  tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+  tft.print("ROTORINO V. 1.12 BY IN3IWZ");      // TESTO VERSIONE ED AUTORE
+  tft.setCursor(60, 10);
+  tft.setTextColor(ST77XX_BLACK, ST77XX_YELLOW);
+  tft.print("beta 3");                          // REVISIONE
+  delay(1000);
+  // ---Etichette Direzione Attuale--- ------------------------------------------------
+  tft.setTextSize(1);
+  tft.setCursor(0, 12);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft.print("ATTUALE");                         // ETICHETTA VALORE DIREZIONE ATTUALE
+  tft.setCursor(31, 22);
+  tft.print((char)247);                         // SIMBOLO GRADO SESSAGESIMALE
+  tft.drawRect (0, 107, 40, 20, ST77XX_WHITE);  // CORNICE DIREZIONE ATTUALE
+  // ---Etichette Direzione Impostata--------------------------------------------------
+  tft.setTextSize(1);
+  tft.setCursor(106, 12);
+  tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+  tft.print("IMPOSTATA");                       // ETICHETTA VALORE DIREZIONE IMPOSTATA
+  tft.setCursor(144, 22);
+  tft.print((char)247);                         // SIMBOLO GRADO SESSAGESIMALE
+  tft.drawRect (119, 107, 40, 20, ST77XX_RED);  // CORNICE DIREZIONE IMPOSTATA
+  // ---Cerchi-------------------------------------------------------------------------
+  tft.drawCircle(xC, yC, rC, ST77XX_WHITE);     // CERCHIO INTERNO
+  tft.drawCircle(xC, yC, rC + 3, ST77XX_GREEN); // CERCHIO ESTERNO
+  tft.fillCircle(xC, yC, rCC, ST77XX_GREEN);    // CERCHIO PIENO SU ORIGINE AGO DIREZIONE
+  // ---Graduazione Cerchi-------------------------------------------------------------
+  for (float i = 0.00000; i < 6.28000; i = i + 0.19625)
+  {
+    aT = i;
+    int xT1 = xC + (rC + 1) * cos(aT);                // CALCOLO ASCISSA PUNTO INIZIALE GRADUAZIONE CERCHI
+    int yT1 = yC - (rC + 1) * sin(aT);                // CALCOLO ORDINATA PUNTO INIZIALE GRADUAZIONE CERCHI
+    int xT2 = xC + (rC + 3) * cos(aT);                // CALCOLO ASCISSA PUNTO FINALE AGRADUAZIONE CERCHI
+    int yT2 = yC - (rC + 3) * sin(aT);                // CALCOLO ORDINATA PUNTO FINALE GRADUAZIONE CERCHI
+    tft.drawLine(xT1, yT1, xT2, yT2, ST77XX_YELLOW);  // TRACCIAMENTO GRADUAZIONE CERCHI
+  }
+  for (float j = 0.78500; j < 6.28000; j = j + 1.57000)
+  {
+    aT = j;
+    int xT1 = xC + (rC + 1) * cos(aT);                // CALCOLO ASCISSA PUNTO INIZIALE GRADUAZIONE CERCHI
+    int yT1 = yC - (rC + 1) * sin(aT);                // CALCOLO ORDINATA PUNTO INIZIALE GRADUAZIONE CERCHI
+    int xT2 = xC + (rC + 5) * cos(aT);                // CALCOLO ASCISSA PUNTO FINALE AGRADUAZIONE CERCHI
+    int yT2 = yC - (rC + 5) * sin(aT);                // CALCOLO ORDINATA PUNTO FINALE GRADUAZIONE CERCHI
+    tft.drawLine(xT1, yT1, xT2, yT2, ST77XX_RED   );  // TRACCIAMENTO GRADUAZIONE CERCHI
+  }
+  // ---Punti Cardinali----------------------------------------------------------------
+  tft.fillRect(76, 27, 9, 8, ST77XX_BLACK);      // SPAZIO PER PUNTI CARDINALI SU CERCHI (N)
+  tft.fillRect(37, 67, 6, 11, ST77XX_BLACK);     // SPAZIO PER PUNTI CARDINALI SU CERCHI (W)
+  tft.fillRect(119, 67, 6, 11, ST77XX_BLACK);    // SPAZIO PER PUNTI CARDINALI SU CERCHI (E)
+  tft.fillRect(76, 110, 9, 8, ST77XX_BLACK);     // SPAZIO PER PUNTI CARDINALI SU CERCHI (S)
+  tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+  tft.setCursor(78, 27);
+  tft.print("N");                               // NORD
+  tft.setCursor(37, 69);
+  tft.print("W");                               // OVEST
+  tft.setCursor(119, 69);
+  tft.print("E");                               // EST
+  tft.setCursor(78, 110);
+  tft.print("S");                               // SUD
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft.setCursor(78, 19);
+  tft.print("0");                               // 0°=360°
+  tft.setCursor(17, 69);
+  tft.print("270");                             // 270°
+  tft.setCursor(126, 69);
+  tft.setTextColor(0xBEBEBE, ST77XX_BLACK);
+  tft.print("0");                               // 0 AVANTI 90° PER ALLINEAMENTO
+  tft.setCursor(132, 69);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft.print("90");                              // 90°
+  tft.setCursor(72, 119);
+  tft.print("180");                             // 180°
+  delay(500);
+  // --------ENCODER-------------------------------------------------------------------
+  pinMode(encoderCLK, INPUT);                      // IMPOSTA PIN D2 COME INPUT (INTERRUPT 0)
+  pinMode(encoderDT, INPUT);                       // IMPOSTA PIN D4 COME INPUT
+  pinMode(encoderSW, INPUT_PULLUP);                // IMPOSTA PIN D3 COME INPUT (INTERRUPT 1)
+  attachInterrupt(interrupt0, CLKChanged, CHANGE); // IMPOSTA GENERAZIONE INTERRUPT 0 AL CAMBIO STATO ENCODER
+  attachInterrupt(interrupt1, SWPressed, FALLING); // IMPOSTA GENERAZIONE INTERRUPT 0 AL CAMBIO STATO PULSANTE
+  prevCLKState = digitalRead(encoderCLK);          // ASSEGNA IL VALORE ATTUALE ALLA VARIABILE STATO PRECEDENTE
+  // --------PULSANTI------------------------------------------------------------------
+  pinMode(pushBTN_CW, INPUT_PULLUP); // IMPOSTA PIN D5 COME INPUT CON RESISTENZA DI PULL UP
+  pinMode(pushBTN_CCW, INPUT_PULLUP); // IMPOSTA PIN D6 COME INPUT CON RESISTENZA DI PULL UP
+  // --------RELE’---------------------------------------------------------------------
+  pinMode (rele_CW, OUTPUT);         // IMPOSTA PIN A1 (ATTIVAZIONE RELE CW) COME OUTPUT
+  pinMode (rele_CCW, OUTPUT);        // IMPOSTA PIN A2 (ATTIVAZIONE RELE CCW) COME OUTPUT
+  // pinMode (rele_220, OUTPUT);        // IMPOSTA PIN A3 (ATTIVAZIONE RELE 220) COME OUTPUT
+  digitalWrite(rele_CW, HIGH);       // ASSEGNA A PIN A1 STATO HIGH (1) RELE’ CW SPENTO
+  digitalWrite(rele_CCW, HIGH);      // ASSEGNA A PIN A2 STATO HIGH (1) RELE’ CCW SPENTO
+  //digitalWrite(rele_220, HIGH);      // ASSEGNA A PIN A3 STATO HIGH (1) RELE’ 220 SPENTO
+}
+// ***LOOP*****************************************************************************
+void loop()
+{
+  // --------DISPLAY-------------------------------------------------------------------
+  // ---Direzione Attuale--------------------------------------------------------------
+  tft.setCursor(11, 22);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  sprintf (G_STR, "%3d", G);   // FORMATTAZIONE VALORE ANGOLO GEOGRAFICO DIREZIONE ATTUALE (VERDE)
+  tft.setTextSize(1);
+  tft.print(G_STR);            // STAMPA ANGOLO GEOGRAFICO DIREZIONE ATTUALE (VERDE)IN STRINGA FORMATTATA
+  tft.setCursor(3, 110);
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft.print(G_STR);            // STAMPA ANGOLO GEOGRAFICO DIREZIONE ATTUALE (VERDE)IN STRINGA FORMATTATA
+  // ---Direzione Impostata------------------------------------------------------------
+  tft.setCursor(124, 22);
+  tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+  sprintf (IG_STR, "%3d", IG); // FORMATTAZIONE VALORE ANGOLO GEOGRAFICO DIREZIONE IMPOSTATA (ROSSA)
+  tft.setTextSize(1);
+  tft.print(IG_STR);           // STAMPA ANGOLO GEOGRAFICO DIREZIONE IMPOSTATA (ROSSA)IN STRINGA FORMATTATA
+  tft.setCursor(122, 110);
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_RED, ST77XX_BLACK);
+  tft.print(IG_STR);           // STAMPA ANGOLO GEOGRAFICO DIREZIONE IMPOSTATA (VERDE)IN STRINGA FORMATTATA
+  // ---Preavviso direzione rotazione---------------------------------------------------
+  if ((abs(IMdlb - M) <= 3))                        // SE DIR. IMP. - DIR. ATT. <= 3 E PIGIONE ATTIVATO FERMA TUTTO
+  {
+    tft.fillTriangle (105, 122, 105, 112, 115, 117, ST77XX_BLACK); // CANCELLA INDICATORE AUSILIARIO MOVIMENTO CW
+    tft.fillTriangle (43, 117, 53, 112, 53, 122, ST77XX_BLACK);    // CANCELLA INDICATORE AUSILIARIO MOVIMENTO CCW
+  }
+  else {
+    if (IMdlb - M > 3) {
+      tft.fillTriangle (43, 117, 53, 112, 53, 122, ST77XX_BLACK);     // CANCELLA INDICATORE AUSILIARIO MOVIMENTO CCW
+      tft.fillTriangle (105, 122, 105, 112, 115, 117, ST77XX_YELLOW); // TRACCIA INDICATORE AUSILIARIO MOVIMENTO CW
+    }
+    if (IMdlb - M < -3) {
+      tft.fillTriangle (105, 122, 105, 112, 115, 117, ST77XX_BLACK);  // CANCELLA INDICATORE AUSILIARIO MOVIMENTO CW
+      tft.fillTriangle (43, 117, 53, 112, 53, 122, ST77XX_YELLOW);    // TRACCIA INDICATORE AUSILIARIO MOVIMENTO CCW
+    }
+  }
+
+  // ---EVENTUALE ROTAZIONE PER RAGGIUNGIMENTO DIREZIONE IMPOSTATA------------------------------------- //
+  if ((BTN_CW != LOW) && (BTN_CCW != LOW))         // SE E' ATTIVA ROTAZIONE MANUALE BYPASSA ROTAZIONE AUTOMATICA
+  {
+    if ((abs(IMdlb - M) <= 3))                      // SE DIR. IMP. - DIR. ATT. <= 3 E PIGIONE ATTIVATO FERMA TUTTO
+                                                    // MODIFICARE DEFAULT 15 SECONDO INERZIA MOTORE
+    {
+      GO_NOGO = NOGO;                                // IMPOSTA DISSENSO A FLAG ROTAZIONE AUTOMATICA
+      digitalWrite(rele_CW, GO_NOGO);                // DISATTIVA PER BUONA MISURA RELE CW
+      digitalWrite(rele_CCW, GO_NOGO);               // DISATTIVA PER BUONA MISURA RELE CW
+      // digitalWrite(rele_220, GO_NOGO);               // DISATTIVA PER BUONA MISURA RELE 220
+      tft.fillTriangle (140, 60, 140, 50, 150, 55, ST77XX_BLACK); // CANCELLA TRIANGOLO INDICATORE MOVIMENTO CW
+      tft.fillTriangle (10, 55, 20, 50, 20, 60, ST77XX_BLACK);    // CANCELLA TRIANGOLO INDICATORE MOVIMENTO CCW
+    }
+    else {
+      if (IMdlb - M > 1) {                           // SE DIR. IMP. - DIR. ATT. > 2 O PIGIONE DISATT. AVVIA ROTAZIONE
+        // digitalWrite(rele_220, GO_NOGO);             // SE DIR. IMP. > DIR. ATT. E PIGIONE ATTIVATO ATTIVA RELE 220
+        // delay(150);
+        digitalWrite(rele_CW, GO_NOGO);              // SE DIR. IMP. > DIR. ATT. E PIGIONE ATTIVATO ATTIVA RELE CW
+        if (GO_NOGO == GO) {
+          tft.fillTriangle (10, 55, 20, 50, 20, 60, ST77XX_BLACK);  // CANCELLA TRIANGOLO INDICATORE MOVIMENTO CCW
+          tft.fillTriangle (140, 60, 140, 50, 150, 55, ST77XX_RED); // TRACCIA TRIANGOLO INDICATORE MOVIMENTO CW
+        }
+      }
+      if (IMdlb - M < -1) {                          // SE DIR. IMP. - DIR. ATT. < -2 O PIGIONE DISATT. AVVIA ROTAZIONE
+        // digitalWrite(rele_220, GO_NOGO);             // SE DIR. IMP. > DIR. ATT. E PIGIONE ATTIVATO ATTIVA RELE 220
+        // delay(150);
+        digitalWrite(rele_CCW, GO_NOGO);             // SE DIR. IMP. < DIR. ATT. E PIGIONE ATTIVATO ATTIVA RELE CCW
+        if (GO_NOGO == GO) {
+          tft.fillTriangle (140, 60, 140, 50, 150, 55, ST77XX_BLACK); // CANCELLA TRIANGOLO INDICATORE MOVIMENTO CW
+          tft.fillTriangle (10, 55, 20, 50, 20, 60, ST77XX_RED);      // TRACCIA TRIANGOLO INDICATORE MOVIMENTO CCW
+        }
+      }
+    }
+  }
+  // ------------------------------------------------------------------------------------------------- //
+  // --------POTENZIOMETRO---------------------------------------------------------------
+  int sensorValue = analogRead(POT_CENT);                        // LETTURA VALORE POTENZIOMETRO (0-1023)
+  int dirMap = (int)map(sensorValue, 0, 1023, 0, 360);           // MAPPATURA DA (0-1023) A (0-360)
+  float dirMapRad100 = (float)map(sensorValue, 0, 1023, 0, 628); // MAPPATURA DA (0-1023) A (0-628)(RAD*100)
+  int deltaM = abs(prec_dirMap - dirMap);                        // DIFF. ASSOLUTA VALORI PRECEDENTE-ATTUALE
+  float dirMapRad = dirMapRad100 / 100;                          // VALORE IN RADIANTI
+  if (deltaM > 1)                                                // SE C’E’ VARIAZIONE DIREZIONE AGGIORNA DIS.
+  {
+    // AGGIORNAMENTO DISEGNO DIREZIONE ATTUALE---------------------------------------------------------- //
+    tft.drawLine(xCC, yCC, xP, yP, ST77XX_BLACK);  // CANCELLAZIONE AGO DIREZIONE ATTUALE PRECEDENTE
+    // ------------------------------------------------------------------------------------------------- //
+    // CALCOLO DIREZIONI ATTUALI NELLE VARIE FORME: M (DI MAPPATURA), T (TRIGONOMETRICA), G (GEOGRAFICA) //
+    // M: 0°= SUD DIREZIONE ORARIA     (MRad: VALORE DI M IN RADIANTI)                                   //
+    // T: 0°= EST DIREZIONE ANTIORARIA (TRad: VALORE DI T IN RADIANTI)                                   //
+    // G: 0°= NORD DIREZIONE ORARIA    (GRad: VALORE DI G IN RADIANTI)                                   //
+    // ------------------------------------------------------------------------------------------------- //
+    M = dirMap;                                                                // VAL. M° DA POT. MAPP.
+    float MRad = dirMapRad;                                                        // VAL. Mrad DA POT. MAPP.
+    int T = 270 - M + (((M > 270) && (M <= 360)) ? 1 : 0) * 360;                   // CONV. DA M° A T°
+    float TRad = 4.71 - MRad + (((MRad > 4.71) && (MRad <= 6.28)) ? 0 : 1) * 6.28; // CONV. DA Mrad A Trad
+    G = 450 - T - ((450 - T) > 360) * 360;                                         // CONV. DA T° A G°
+    float GRad = 7.85 - TRad - ((7.85 - TRad) > 6.28) * 6.28;                      // CONV. DA Trad A Grad
+    // ------------------------------------------------------------------------------------------------- //
+    // TRACCIAMENTO AGO DIREZIONE ATTUALE                                                                //
+    // ------------------------------------------------------------------------------------------------- //
+    int DX = (rC - 2) * cos(TRad);                // CALCOLO DELTA X PUNTO FINALE AGO DI DIREZIONE ATTUALE
+    int DY = (rC - 2) * sin(TRad);                // CALCOLO DELTA Y PUNTO FINALE AGO DI DIREZIONE ATTUALE
+    xP = xC + DX;                                 // CALCOLO ASCISSA PUNTO FINALE AGO DI DIREZIONE ATTUALE
+    yP = yC - DY;                                 // CALCOLO ORDINATA PUNTO FINALE AGO DI DIREZIONE ATTUALE
+    int DXC = (rCC + 5) * cos(TRad);              // CALCOLO DELTA X PUNTO INIZIALE AGO DI DIREZIONE ATTUALE
+    int DYC = (rCC + 5) * sin(TRad);              // CALCOLO DELTA Y PUNTO INIZIALE AGO DI DIREZIONE ATTUALE
+    xCC = xC + DXC;                               // CALCOLO ASCISSA PUNTO INIZIALE AGO DI DIREZIONE ATTUALE
+    yCC = yC - DYC;                               // CALCOLO ORDINATA PUNTO INIZIALE AGO DI DIREZIONE ATTUALE
+    tft.drawLine(xCC, yCC, xP, yP, ST77XX_GREEN); // TRACCIAMENTO AGO DIREZIONE ATTUALE
+    tft.drawLine(xICC, yICC, xIP, yIP, ST77XX_RED);  // RITRACCIAMENTO AGO DIREZIONE IMPOSTATA
+    // ------------------------------------------------------------------------------------------------- //
+  }
+  prec_dirMap = dirMap;                         // ASSEGNA IL VALORE ATTUALE ALLA VAR. DIR. PRECEDENTE (M°)
+  delay(150);
+  // --------ENCODER-------------------------------------------------------------------
+  // ---Impostazione Rotazione---------------------------------------------------------
+  int deltaEC = abs(prec_encoderCount - encoderCount);           // DIFF. ASSOLUTA VALORI PRECEDENTE-ATTUALE
+  if (deltaEC != 0)                                              // SE C’E’ VARIAZIONE DIREZIONE AGGIORNA DIS.
+  {
+    // AGGIORNAMENTO DISEGNO DIREZIONE IMPOSTATA-------------------------------------------------------- //
+    tft.drawLine(xICC, yICC, xIP, yIP, ST77XX_BLACK);  // CANCELLAZIONE AGO DIREZIONE IMPOSTATA PRECEDENTE
+    // ------------------------------------------------------------------------------------------------- //
+    // ------------------------------------------------------------------------------------------------- //
+    // CALCOLO DIREZIONI ATTUALI NELLE VARIE FORME: M (DI MAPPATURA), T (TRIGONOMETRICA), G (GEOGRAFICA) //
+    // IM: 0°= SUD DIREZIONE ORARIA     (IMRad: VALORE DI M IN RADIANTI)                                 //
+    // IT: 0°= EST DIREZIONE ANTIORARIA (ITRad: VALORE DI T IN RADIANTI)                                 //
+    // IG: 0°= NORD DIREZIONE ORARIA    (IGRad: VALORE DI G IN RADIANTI)                                 //
+    // ------------------------------------------------------------------------------------------------- //
+    IMdlb = IM + encoderCount;                                                        // VAL. IM° DA ENC.
+    float IMRad = (float)map(IMdlb, 0, 360, 0, 628) / 100;                            // VAL. IMrad DA ENC. MAP.
+    int IT = 270 - IMdlb + (((IMdlb > 270) && (IMdlb <= 360)) ? 1 : 0) * 360;         // CONV. DA IM° A IT°
+    float ITRad = 4.71 - IMRad + (((IMRad > 4.71) && (IMRad <= 6.28)) ? 0 : 1) * 6.28;// CONV. DA IMrad A ITrad
+    IG = 450 - IT - ((450 - IT) > 360) * 360;                                         // CONV. DA IT° A IG°
+    float IGRad = 7.85 - ITRad - ((7.85 - ITRad) > 6.28) * 6.28;                      // CONV. DA ITrad A IGrad
+    // ------------------------------------------------------------------------------------------------- //
+    // TRACCIAMENTO AGO DIREZIONE IMPOSTATA                                                              //
+    // ------------------------------------------------------------------------------------------------- //
+    int IDX = (rC - 2) * cos(ITRad);               // CALCOLO DELTA X PUNTO FINALE AGO DI DIREZIONE IMPOSTATA
+    int IDY = (rC - 2) * sin(ITRad);               // CALCOLO DELTA Y PUNTO FINALE AGO DI DIREZIONE IMPOSTATA
+    xIP = xC + IDX;                                // CALCOLO ASCISSA PUNTO FINALE AGO DI DIREZIONE IMPOSTATA
+    yIP = yC - IDY;                                // CALCOLO ORDINATA PUNTO FINALE AGO DI DIREZIONE IMPOSTATA
+    int DXC = (rCC + 5) * cos(ITRad);              // CALCOLO DELTA X PUNTO INIZIALE AGO DI DIREZIONE IMPOSTATA
+    int DYC = (rCC + 5) * sin(ITRad);              // CALCOLO DELTA Y PUNTO INIZIALE AGO DI DIREZIONE IMPOSTATA
+    xICC = xC + DXC;                               // CALCOLO ASCISSA PUNTO INIZIALE AGO DI DIREZIONE IMPOSTATA
+    yICC = yC - DYC;                               // CALCOLO ORDINATA PUNTO INIZIALE AGO DI DIREZIONE IMPOSTATA
+    tft.drawLine(xICC, yICC, xIP, yIP, ST77XX_RED);  // TRACCIAMENTO AGO DIREZIONE IMPOSTATA
+    tft.drawLine(xCC, yCC, xP, yP, ST77XX_GREEN);    // RITRACCIAMENTO AGO DIREZIONE ATTUALE
+    // ------------------------------------------------------------------------------------------------- //
+  }
+  prec_encoderCount = encoderCount;               // ASSEGNA IL VALORE ATTUALE ALLA VARIABILE STATO PRECEDENTE
+  // --------PULSANTI------------------------------------------------------------------
+  BTN_CW = digitalRead(pushBTN_CW);             // LETTURA VALORE PULSANTE CW D5(HIGH=APERTO; LOW=CHIUSO)
+  BTN_CCW = digitalRead(pushBTN_CCW);           // LETTURA VALORE PULSANTE CCW D6(HIGH=APERTO; LOW=CHIUSO)
+  // --------RELE’---------------------------------------------------------------------
+  if (GO_NOGO == HIGH) {
+    if (BTN_CW == LOW) {
+      digitalWrite(rele_CW, LOW); // SE PULSANTE CW D5 LOW=CHIUSO, ALLORA ATTIVA RELE CW A1
+    }
+    else {
+      digitalWrite(rele_CW, HIGH); // ALTRIMENTI DISATTIVA RELE CW A1
+    }
+    if (BTN_CCW == LOW) {
+      digitalWrite(rele_CCW, LOW); // SE PULSANTE CCW D6 LOW=CHIUSO, ALLORA ATTIVA RELE CCW A2
+    }
+    else {
+      digitalWrite(rele_CCW, HIGH); // ALTRIMENTI DISATTIVA RELE CCW A2
+    }
+  }
+}
+// ***FUNZIONI*************************************************************************
+// --------ENCODER---------------------------------------------------------------------
+// ---Variazione direzione impostata---------------------------------------------------
+void CLKChanged() {                                                  // ATTIVATA DA INTERRUPT 0
+  int actCLKState = digitalRead(encoderCLK);                         // LETTURA VALORE ENCODER
+  if (prevCLKState != actCLKState)                                   // ANTIBOUNCING
+  {
+    encoderCount += (actCLKState == digitalRead(encoderDT) ? 1 : -1);
+    if (encoderCount < -180) {                                       // LIMITAZIONE ROTAZIONE CCW A SUD
+      encoderCount = -180;                                           // LIMITAZIONE ROTAZIONE CCW A SUD
+    }
+    if (encoderCount > 180) {                                        // LIMITAZIONE ROTAZIONE CW A SUD
+      encoderCount = 180;                                            // LIMITAZIONE ROTAZIONE CW A SUD
+    }
+    prevCLKState = actCLKState;                   // ASSEGNA IL VALORE ATTUALE ALLA VARIABILE STATO PRECEDENTE
+  }
+}
+// ---Avvio Rotazione per variazione direzione impostata-------------------------------
+void SWPressed() {                                 // ATTIVATA DA INTERRUPT 1 (PULSANTE ENCODER PREMUTO PIN D3)
+  GO_NOGO = ((GO_NOGO == GO) ? NOGO : GO);         // CAMBIA LA VARIABILE PER IL CONSENSO ALLA ROTAZIONE
+}
+// ------------------------------------------------------------------------------------
